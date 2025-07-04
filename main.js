@@ -94,9 +94,9 @@ async function main() {
             let toolCallFunctionName = "";
             let aiResponse = "";
             let doStop = false;
-            let toolCalls = new Map();
 
             do {
+                let toolCalls = new Map();
                 if (debug) {
                     console.log(`[System] call llm with messages: ${JSON.stringify(messages)}`);
                     console.log(`[System] curl command: curl --location --request POST "${llmConfig.baseURL}/chat/completions" --header "Authorization: Bearer ${llmConfig.apiKey}" --data-raw '${JSON.stringify({

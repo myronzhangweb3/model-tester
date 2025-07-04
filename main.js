@@ -50,12 +50,10 @@ async function main() {
 
         // Show tool list in a more readable format
         console.log("[System] Tool list:");
-        availableTools.forEach(tool => {
-            console.log(`[System] Tool Name: ${tool.function.name}`);
-            console.log(`[System] Description: ${tool.function.description}`);
-            console.log(`[System] Parameter: ${JSON.stringify(tool.function.parameters)}`);
-            console.log('[System] -----------------------------');
+        availableTools.forEach((tool, index) => {
+            console.log(`[System] ${index + 1}: Tool Name: ${tool.function.name}. Description: ${tool.function.description} Parameter: ${JSON.stringify(tool.function.parameters)}`);
         });
+        console.log('[System] -----------------------------');
 
         // LLM
         const openai = new OpenAI(

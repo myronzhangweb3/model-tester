@@ -67,8 +67,7 @@ async function main() {
 
         let continueConversation = true;
         const messages = [
-            { role: "system", content: prompt },
-            { role: "user", content: initMsg }
+            { role: "system", content: `${prompt} \n\n ${initMsg}` },
         ];
 
         const rl = readline.createInterface({
@@ -150,6 +149,10 @@ async function main() {
                     }
 
                     if (part.choices[0].finish_reason == "tool_calls") {
+                        if (aiResponse !== "") {
+                            messages.push({ role: "assistant", content: aiResponse });
+                            aiResponse = '';
+                        }
                         console.log("\n");
                         for (const [key, value] of toolCalls.entries()) {
                             try {
@@ -198,16 +201,21 @@ function handleToolResult(messages, toolResults) {
             role: "user",
             content: JSON.stringify(toolResult),
         });
-        if (JSON.parse(toolResult.content[0].text).signNeed == true) {
+        const toolResultText = JSON.parse(toolResult.content[0].text);
+        const operations = toolResultText.metadata && toolResultText.metadata.operations;
+        const description = operations && operations.length > 0 
+            ? operations[0].description 
+            : "";
+        if (toolResultText.signNeed == true) {
             if (mockTxStatusSuccess) {
                 messages.push({
                     role: "user",
-                    content: "tx success. tx hash: 0xd9c51fc233d947de75157a1fec9a516a7e48489427c41b976355b66a2da5fca1",
+                    content: `${description}. tx success. tx hash: 0xd9c51fc233d947de75157a1fec9a516a7e48489427c41b976355b66a2da5fca1.`,
                 });
             } else {
                 messages.push({
                     role: "user",
-                    content: "tx failed. error: user cancel.",
+                    content: `${description}. tx failed. error: user cancel.`,
                 });
             }
         }

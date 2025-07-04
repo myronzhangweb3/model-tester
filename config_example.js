@@ -52,3 +52,12 @@ export const llmConfigs = {
         enableThinking: false,
     }
 };
+
+// User address for connecting the wallet.
+const connectAddress = "0xF5054F94009B7E9999F6459f40d8EaB1A2ceA22D";
+// Whether the simulated trading execution result is successful.
+export const mockTxStatusSuccess = true;
+// first user message
+export const initMsg = `connectAddress is a global variable. This variable represents the user's address and the transaction sending address, and it may also become the transaction to address or other parameters. connectAddress: ${connectAddress}`
+// debug log
+export const debug = false;

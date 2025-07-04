@@ -6,37 +6,32 @@ import OpenAI from "openai";
 import fs from 'fs';
 import readline from 'readline';
 import { exit } from 'process';
-import { mcpConfig, llmConfigs } from './config.js';
+import { mcpConfig, llmConfigs, initMsg, mockTxStatusSuccess, debug } from './config.js';
 
-console.log("MCP configuration:", JSON.stringify(mcpConfig, null, 2));
-
-// User address for connecting the wallet.
-const connectAddress = "0xF5054F94009B7E9999F6459f40d8EaB1A2ceA22D";
-// Whether the simulated trading execution result is successful.
-const mockTxStatusSuccess = true;
+console.log("[System] MCP configuration:", JSON.stringify(mcpConfig, null, 2));
+console.log("[System] initMsg:", initMsg);
+console.log("[System] mockTxStatusSuccess:", mockTxStatusSuccess);
 
 async function main() {
     try {
         const modelKey = process.argv[2];
         const llmConfig = llmConfigs[modelKey];
-        console.log("LLM Configuration:", JSON.stringify(llmConfig, null, 2));
+        console.log("[System] LLM Configuration:", JSON.stringify(llmConfig, null, 2));
 
         // Read the system prompts
-        const toolPrompt = fs.readFileSync('prompt/tool_prompt.md', 'utf-8');
-        const outputPrompt = toolPrompt;
-        // const outputPrompt = fs.readFileSync('prompt/output_prompt.md', 'utf-8');
+        const prompt = fs.readFileSync('prompt/prompt.md', 'utf-8');
 
-        // mcp server
+        // MCP server
         let sseTransport;
         switch (mcpConfig.transport) {
             case "sse":
-                console.log(`connect mcp server by sse`);
+                console.log(`[System] Connect MCP server by SSE`);
                 sseTransport = new SSEClientTransport(new URL(mcpConfig.url));
-                break
+                break;
             case "httpStream":
-                console.log(`connect mcp server by httpStream`);
+                console.log(`[System] Connect MCP server by HTTP Stream`);
                 sseTransport = new StreamableHTTPClientTransport(new URL(mcpConfig.url));
-                break
+                break;
         }
         const mcpClient = new Client({
             name: 'js-mcp-demo',
@@ -54,15 +49,15 @@ async function main() {
         }));
 
         // Show tool list in a more readable format
-        console.log("Tool list:");
+        console.log("[System] Tool list:");
         availableTools.forEach(tool => {
-            console.log(`Tool Name: ${tool.function.name}`);
-            console.log(`Description: ${tool.function.description}`);
-            console.log(`Parameter: ${JSON.stringify(tool.function.parameters)}`);
-            console.log('-----------------------------');
+            console.log(`[System] Tool Name: ${tool.function.name}`);
+            console.log(`[System] Description: ${tool.function.description}`);
+            console.log(`[System] Parameter: ${JSON.stringify(tool.function.parameters)}`);
+            console.log('[System] -----------------------------');
         });
 
-        // llm
+        // LLM
         const openai = new OpenAI(
             {
                 apiKey: llmConfig.apiKey,
@@ -72,8 +67,8 @@ async function main() {
 
         let continueConversation = true;
         const messages = [
-            { role: "system", content: '' },
-            { role: "user", content: `connectAddress is a global variable. This variable represents the user's address and the transaction sending address, and it may also become the transaction to address or other parameters. connectAddress: ${connectAddress}` }
+            { role: "system", content: prompt },
+            { role: "user", content: initMsg }
         ];
 
         const rl = readline.createInterface({
@@ -95,74 +90,25 @@ async function main() {
                 messages.push({ role: "user", content: userInput });
             }
 
-            messages[0].content = toolPrompt;
-            // console.log(`messages: ${JSON.stringify(messages)}`);
-            const completion = await openai.chat.completions.create({
-                model: llmConfig.model,
-                messages: messages,
-                tools: availableTools,
-                tool_choice: "auto",
-                chat_template_kwargs: { "enable_thinking": llmConfig.enableThinking },
-                stream: true,
-            });
-
+            let toolCount = 0;
             let toolCallFunctionName = "";
-            let toolCallParams = "";
-            let messageType = 0;
             let aiResponse = "";
-            process.stdout.write("\n");
+            let doStop = false;
+            let toolCalls = new Map();
 
-            for await (const part of completion) {
-                if (part.choices[0].delta.reasoning_content && part.choices[0].delta.reasoning_content != "") {
-                    if (messageType != 1) {
-                        process.stdout.write("🤔 AI Think:\n");
-                        messageType = 1;
-                    }
-                    process.stdout.write(part.choices[0].delta.reasoning_content);
+            do {
+                if (debug) {
+                    console.log(`[System] call llm with messages: ${JSON.stringify(messages)}`);
+                    console.log(`[System] curl command: curl --location --request POST "${llmConfig.baseURL}/chat/completions" --header "Authorization: Bearer ${llmConfig.apiKey}" --data-raw '${JSON.stringify({
+                        model: llmConfig.model,
+                        messages: messages,
+                        tools: availableTools,
+                        tool_choice: "auto",
+                        chat_template_kwargs: { "enable_thinking": llmConfig.enableThinking },
+                        stream: true,
+                    }).replace(/'/g, "\\'")}'`);
                 }
-                if (part.choices[0].delta.content && part.choices[0].delta.content != "") {
-                    if (messageType != 2) {
-                        process.stdout.write("✅ AI:\n");
-                        messageType = 2;
-                    }
-                    process.stdout.write(part.choices[0].delta.content);
-                    aiResponse += part.choices[0].delta.content;
-                }
-
-                if (part.choices[0].delta.tool_calls) {
-                    // console.log(part.choices[0].delta.tool_calls[0].function.arguments)
-                    if (!toolCallFunctionName) {
-                        toolCallFunctionName = part.choices[0].delta.tool_calls[0].function.name
-                    }
-                    // function arg finished
-                    if (toolCallFunctionName && part.choices[0].delta.tool_calls[0].function.name && toolCallFunctionName != part.choices[0].delta.tool_calls[0].function.name) {
-                        const toolResult = await callTools(mcpClient, toolCallFunctionName, toolCallParams);
-                        handleToolResult(messages, toolResult);
-                        toolCallFunctionName = part.choices[0].delta.tool_calls[0].function.name
-                        toolCallParams = "";
-                    }
-                    // add arg
-                    if (part.choices[0].delta.tool_calls[0].function.arguments && part.choices[0].delta.tool_calls[0].function.arguments != "") {
-                        toolCallParams += part.choices[0].delta.tool_calls[0].function.arguments
-                    }
-                }
-
-                // stop
-                if (part.choices[0].finish_reason == "tool_calls") {
-                    const toolResult = await callTools(mcpClient, toolCallFunctionName, toolCallParams);
-                    handleToolResult(messages, toolResult);
-                }
-            }
-
-            if (aiResponse !== "") {
-                messages.push({ role: "assistant", content: aiResponse });
-            }
-
-            // Carry tools to initiate the request.
-            if (toolCallFunctionName && toolCallFunctionName != "") {
-                messages[0].content = outputPrompt;
-                // console.log(`messages: ${JSON.stringify(messages)}`);
-                const finallyCompletion = await openai.chat.completions.create({
+                const completion = await openai.chat.completions.create({
                     model: llmConfig.model,
                     messages: messages,
                     tools: availableTools,
@@ -172,62 +118,86 @@ async function main() {
                 });
 
                 let messageType = 0;
-                let finalAiResponse = "";
+                aiResponse = "";
                 process.stdout.write("\n");
-                for await (const part of finallyCompletion) {
-                    // console.log(`part.choices[0]: ${JSON.stringify(part.choices[0])}`);
-                    if (part.choices[0].delta.reasoning_content) {
+
+                for await (const part of completion) {
+                    if (part.choices[0].delta.reasoning_content && part.choices[0].delta.reasoning_content != "") {
                         if (messageType != 1) {
-                            process.stdout.write("🔧🤔 AI Think(Tools):\n");
+                            process.stdout.write("🤔 AI Think:\n");
                             messageType = 1;
                         }
                         process.stdout.write(part.choices[0].delta.reasoning_content);
                     }
-                    if (part.choices[0].delta.content) {
+                    if (part.choices[0].delta.content && part.choices[0].delta.content != "") {
                         if (messageType != 2) {
-                            process.stdout.write("🔧✅ AI(Tools):\n");
+                            process.stdout.write("✅ AI:\n");
                             messageType = 2;
                         }
                         process.stdout.write(part.choices[0].delta.content);
-                        finalAiResponse += part.choices[0].delta.content;
+                        aiResponse += part.choices[0].delta.content;
+                    }
+
+                    if (part.choices[0].delta.tool_calls) {
+                        // next function
+                        if (part.choices[0].delta.tool_calls[0].function.name && part.choices[0].delta.tool_calls[0].function.name != "") {
+                            toolCallFunctionName = part.choices[0].delta.tool_calls[0].function.name;
+                            toolCalls.set(toolCallFunctionName, '');
+                        }
+                        if (part.choices[0].delta.tool_calls[0].function.arguments && part.choices[0].delta.tool_calls[0].function.arguments != "") {
+                            toolCalls.set(toolCallFunctionName, toolCalls.get(toolCallFunctionName) + part.choices[0].delta.tool_calls[0].function.arguments);
+                        }
+                    }
+
+                    if (part.choices[0].finish_reason == "tool_calls") {
+                        console.log("\n");
+                        for (const [key, value] of toolCalls.entries()) {
+                            try {
+                                const toolResult = await callTools(++toolCount, mcpClient, key, value);
+                                handleToolResult(messages, toolResult);
+                            } catch (error) {
+                                console.error("[System] Error in tool call:", error);
+                            }
+                        }
+                    }
+                    if (!doStop) {
+                        doStop = part.choices[0].finish_reason != null && part.choices[0].finish_reason == "stop";
                     }
                 }
-                if (finalAiResponse !== "") {
-                    messages.push({ role: "assistant", content: finalAiResponse });
+
+                if (aiResponse !== "") {
+                    messages.push({ role: "assistant", content: aiResponse });
                 }
-                // console.log(`finalAiResponse: ${finalAiResponse}`)
-            }
+
+            } while (!doStop);
+
             process.stdout.write("\n");
         }
     } catch (error) {
-        console.error("Error:", error);
+        console.error("[System] Error:", error);
     }
 }
 
-async function callTools(mcpClient, functionName, toolCallParams) {
-    console.log(`Call mcp tool. functionName: ${functionName}, params: ${toolCallParams}`);
-
-    const paramsArray = toolCallParams.includes('}{') ? toolCallParams.split('}{').map((param, index, array) => {
-        if (index === 0) return param + '}';
-        if (index === array.length - 1) return '{' + param;
-        return '{' + param + '}';
-    }) : [toolCallParams];
+async function callTools(count, mcpClient, functionName, toolCallParams) {
+    console.log(`[System] Call MCP tool. Current call tool count: ${count}, functionName: ${functionName}, params: ${toolCallParams}`);
 
     const results = [];
-    for (const params of paramsArray) {
-        const result = await mcpClient.callTool({
-            name: functionName,
-            arguments: JSON.parse(params)
-        });
-        console.log("Tool call result:\n", JSON.stringify(result, null, 2));
-        results.push(result);
-    }
+    const result = await mcpClient.callTool({
+        name: functionName,
+        arguments: JSON.parse(toolCallParams)
+    });
+    console.log("[System] Tool call result:", JSON.stringify(result));
+    results.push(result);
 
     return results;
 }
 
 function handleToolResult(messages, toolResults) {
     toolResults.forEach(toolResult => {
+        messages.push({
+            role: "user",
+            content: JSON.stringify(toolResult),
+        });
         if (JSON.parse(toolResult.content[0].text).signNeed == true) {
             if (mockTxStatusSuccess) {
                 messages.push({
@@ -237,14 +207,9 @@ function handleToolResult(messages, toolResults) {
             } else {
                 messages.push({
                     role: "user",
-                    content: "tx faild. error: user cancel.",
+                    content: "tx failed. error: user cancel.",
                 });
             }
-        } else {
-            messages.push({
-                role: "user",
-                content: JSON.stringify(toolResult),
-            });
         }
     });
 }

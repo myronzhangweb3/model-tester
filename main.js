@@ -78,7 +78,7 @@ async function main() {
 
         while (continueConversation) {
             const userInput = await new Promise((resolve) => {
-                rl.question("\nPlease enter your question (type 'exit' to end the conversation): ", resolve);
+                rl.question("\n[User] Please enter your question (type 'exit' to end the conversation): ", resolve);
             });
 
             if (userInput.toLowerCase() === 'exit') {
